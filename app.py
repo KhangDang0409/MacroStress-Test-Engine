@@ -152,6 +152,7 @@ else:
     liquidity_penalty_arr = np.zeros(len(tickers))
     mu_shocked = mu
     cov_shocked = np.outer(historical_vols, historical_vols) * historical_corr
+    stressed_corr = historical_corr
 
 with st.expander("🔍 View Personalized Risk Classification Report (Full Dynamic)", expanded=False):
     classifier_df = pd.DataFrame({
