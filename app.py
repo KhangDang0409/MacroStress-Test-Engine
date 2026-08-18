@@ -75,37 +75,43 @@ with st.sidebar:
 # ---------------------------------------------------------
 # 3. DATA PIPELINE & CLASSIFIER (FULLY DYNAMIC)
 # ---------------------------------------------------------
-@st.cache_data
+@st.cache_data(ttl=300)
 def fetch_market_data(tickers_list):
-    try:
-        return yf.download(tickers_list, period="2y", progress=False)[['Close', 'Volume']]
-    except Exception:
-        return None
+    close_dict = {}
+    vol_dict = {}
+    # Lặp qua từng mã, tắt threads để "qua mặt" Rate-Limit của Cloud
+    for ticker in tickers_list:
+        try:
+            data = yf.download(ticker, period="2y", progress=False, threads=False)
+            if data is not None and not data.empty:
+                # Xử lý tương thích mọi phiên bản yfinance
+                if isinstance(data.columns, pd.MultiIndex):
+                    close_dict[ticker] = data['Close'].iloc[:, 0]
+                    vol_dict[ticker] = data['Volume'].iloc[:, 0]
+                else:
+                    close_dict[ticker] = data['Close']
+                    vol_dict[ticker] = data['Volume']
+        except Exception:
+            continue
+            
+    if close_dict and vol_dict:
+        return pd.DataFrame(close_dict), pd.DataFrame(vol_dict)
+    return pd.DataFrame(), pd.DataFrame()
 
-with st.spinner("Fetching data and analyzing market microstructure..."):
-    raw_data = fetch_market_data(tickers)
+with st.spinner("Fetching data individually to bypass Cloud rate-limits..."):
+    prices_raw, volumes_raw = fetch_market_data(tickers)
 
-if raw_data is None or raw_data.empty or len(raw_data.columns) == 0:
-    st.error("Data error. Please check the entered tickers.")
+if prices_raw.empty or len(prices_raw.columns) != len(tickers):
+    st.error(f"🚨 API Cloud Blocked: Could not fetch data for all {len(tickers)} tickers. Please wait a moment and refresh.")
     st.stop()
 
-# --- BẢN VÁ LỖI VOLUME VÀ BẢO TOÀN 100% TOÁN HỌC ---
-if len(tickers) == 1:
-    prices = raw_data['Close'].to_frame()
-    prices.columns = tickers
-    prices = prices.dropna()
-    volumes = raw_data['Volume'].to_frame()
-    volumes.columns = tickers
-    volumes = volumes.loc[prices.index].fillna(0)
-else:
-    # 1. Chỉ Dropna bảng Giá để BẢO TOÀN tuyệt đối toán học Monte Carlo như Local
-    prices = raw_data['Close'].dropna()
-    # 2. Lấy bảng Volume theo bảng Giá, lỗi thiếu dữ liệu thì gán = 0 để tránh lây nhiễm NaN
-    volumes = raw_data['Volume'].loc[prices.index].fillna(0)
+# --- BẢO TOÀN 100% TOÁN HỌC GỐC CỦA BẠN ---
+prices = prices_raw.dropna()
+volumes = volumes_raw.loc[prices.index].fillna(0)
 
 # Cầu dao bảo vệ cuối cùng
 if prices.empty or len(prices) < 2:
-    st.error("🚨 API Cloud Failed: Data is empty after cleaning. Please refresh.")
+    st.error("🚨 API Cloud Failed: Data is empty after strict cleaning. Please refresh.")
     st.stop()
 
 daily_returns = prices.pct_change().dropna()
@@ -118,14 +124,20 @@ np.fill_diagonal(historical_corr, 1.0)
 
 mu = daily_returns.mean().values * 252
 
-# Tính ADTV không bao giờ bị NaN
+# Tính ADTV
 adtv = np.nan_to_num((prices.tail(90).mean() * volumes.tail(90).mean()).values, nan=1e-8)
 
 # --- ULTIMATE CLASSIFIER ALGORITHM ---
 if scenario != "Normal Market Conditions":
-    spy_data = yf.download("SPY", period="2y", progress=False)['Close']
+    # Bảo vệ SPY khỏi lỗi mạng Cloud
     try:
-        spy_vol = float(np.squeeze(spy_data.pct_change().dropna().std())) * np.sqrt(252)
+        spy_data = yf.download("SPY", period="2y", progress=False, threads=False)
+        if isinstance(spy_data.columns, pd.MultiIndex):
+            spy_close = spy_data['Close'].iloc[:, 0]
+        else:
+            spy_close = spy_data['Close']
+            
+        spy_vol = float(np.squeeze(spy_close.pct_change().dropna().std())) * np.sqrt(252)
         if np.isnan(spy_vol) or spy_vol == 0:
             spy_vol = 0.15
     except:
