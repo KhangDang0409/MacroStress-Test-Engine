@@ -244,10 +244,14 @@ cvar_95_pct = percentage_returns[percentage_returns <= var_95_pct].mean()
 prob_of_loss = np.mean(final_values < initial_investment) * 100
 
 col1, col2, col3, col4 = st.columns(4)
+
+# FIX MÀU: Đã gỡ bỏ delta_color="inverse" để trả lại mặc định (Số âm hiển thị màu đỏ)
 col1.metric("Expected Value (Mean)", f"{np.mean(final_values):,.0f}",
             f"{(np.mean(final_values) / initial_investment - 1) * 100:.2f}%")
-col2.metric("VaR 95%", f"{var_95_val:,.0f}", f"{var_95_pct:.2f}%", delta_color="inverse")
-col3.metric("CVaR 95% (Expected Shortfall)", f"{cvar_95_val:,.0f}", f"{cvar_95_pct:.2f}%", delta_color="inverse")
+col2.metric("VaR 95%", f"{var_95_val:,.0f}", f"{var_95_pct:.2f}%")
+col3.metric("CVaR 95% (Expected Shortfall)", f"{cvar_95_val:,.0f}", f"{cvar_95_pct:.2f}%")
+
+# Báo động Danger sẽ có màu Đỏ (do dùng inverse với chuỗi dương), Safe có màu Xanh
 col4.metric("Probability of Loss", f"{prob_of_loss:.1f}%", "Danger" if prob_of_loss > 50 else "Safe",
             delta_color="inverse" if prob_of_loss > 50 else "normal")
 
@@ -264,7 +268,6 @@ with tab1:
     fig_paths.add_trace(go.Scatter(y=[initial_investment] * (sim_days + 1), mode='lines', name='Initial Capital',
                                    line=dict(color='yellow', width=2, dash='dash')))
     
-    # BẢN VÁ LỖI ÉP BIỂU ĐỒ TRÊN ĐIỆN THOẠI: Đẩy Legend lên trên cùng nằm ngang
     fig_paths.update_layout(
         template="plotly_dark", 
         hovermode="x unified",
@@ -281,12 +284,11 @@ with tab1:
 with tab2:
     fig_hist = px.histogram(x=final_values, nbins=60, color_discrete_sequence=['#1f77b4'])
     
-    # BẢN VÁ LỖI ĐÈ CHỮ: Phân chia top left (Trái trên) và bottom right (Phải dưới)
     fig_hist.add_vline(x=var_95_val, line_width=3, line_dash="dash", line_color="red",
                        annotation_text=f"VaR 95%: {var_95_pct:.1f}%", annotation_position="top left")
     
     fig_hist.add_vline(x=initial_investment, line_width=2, line_color="yellow", 
-                       annotation_text="Breakeven", annotation_position="top right")
+                       annotation_text="Breakeven", annotation_position="bottom right")
                        
     fig_hist.update_layout(template="plotly_dark")
     st.plotly_chart(fig_hist, use_container_width=True, key="mc_hist_chart") 
