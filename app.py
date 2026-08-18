@@ -79,12 +79,10 @@ with st.sidebar:
 def fetch_market_data(tickers_list):
     close_dict = {}
     vol_dict = {}
-    # Lặp qua từng mã, tắt threads để "qua mặt" Rate-Limit của Cloud
     for ticker in tickers_list:
         try:
             data = yf.download(ticker, period="2y", progress=False, threads=False)
             if data is not None and not data.empty:
-                # Xử lý tương thích mọi phiên bản yfinance
                 if isinstance(data.columns, pd.MultiIndex):
                     close_dict[ticker] = data['Close'].iloc[:, 0]
                     vol_dict[ticker] = data['Volume'].iloc[:, 0]
@@ -105,11 +103,9 @@ if prices_raw.empty or len(prices_raw.columns) != len(tickers):
     st.error(f"🚨 API Cloud Blocked: Could not fetch data for all {len(tickers)} tickers. Please wait a moment and refresh.")
     st.stop()
 
-# --- BẢO TOÀN 100% TOÁN HỌC GỐC CỦA BẠN ---
 prices = prices_raw.dropna()
 volumes = volumes_raw.loc[prices.index].fillna(0)
 
-# Cầu dao bảo vệ cuối cùng
 if prices.empty or len(prices) < 2:
     st.error("🚨 API Cloud Failed: Data is empty after strict cleaning. Please refresh.")
     st.stop()
@@ -118,18 +114,15 @@ daily_returns = prices.pct_change().dropna()
 historical_vols = daily_returns.std().values * np.sqrt(252)
 historical_corr = daily_returns.corr().values
 
-# Ép NaN về 0 để vẽ Heatmap mượt mà nếu có lỗi
 historical_corr = np.nan_to_num(historical_corr, nan=0.0)
 np.fill_diagonal(historical_corr, 1.0)
 
 mu = daily_returns.mean().values * 252
 
-# Tính ADTV
 adtv = np.nan_to_num((prices.tail(90).mean() * volumes.tail(90).mean()).values, nan=1e-8)
 
 # --- ULTIMATE CLASSIFIER ALGORITHM ---
 if scenario != "Normal Market Conditions":
-    # Bảo vệ SPY khỏi lỗi mạng Cloud
     try:
         spy_data = yf.download("SPY", period="2y", progress=False, threads=False)
         if isinstance(spy_data.columns, pd.MultiIndex):
@@ -211,13 +204,11 @@ def run_ultimate_quant_engine(mu_vec, cov_mat, weights_vec, initial_val, days, n
     Jump_Sizes = np.zeros((days, num_assets, n_sims))
 
     for i in range(num_assets):
-        # Chặn lỗi phân phối Poisson
         lam = lambda_j_arr[i]
         if np.isnan(lam) or lam < 0: 
             lam = 0.0
         Poisson_Jumps[:, i, :] = np.random.poisson(lam * dt, size=(days, n_sims))
         
-        # Chặn lỗi phân phối Chuẩn
         m_j = np.nan_to_num(mu_j_arr[i])
         s_j = np.nan_to_num(sigma_j_arr[i])
         Jump_Sizes[:, i, :] = np.random.normal(m_j, s_j, size=(days, n_sims))
@@ -235,7 +226,6 @@ def run_ultimate_quant_engine(mu_vec, cov_mat, weights_vec, initial_val, days, n
         simulated_paths[t] = initial_val * np.tensordot(weights_vec, penalized_prices, axes=(0, 0))
 
     return simulated_paths
-
 
 simulated_paths = run_ultimate_quant_engine(
     mu_shocked, cov_shocked, weights, initial_investment, sim_days, num_simulations,
@@ -273,14 +263,31 @@ with tab1:
                        showlegend=False))
     fig_paths.add_trace(go.Scatter(y=[initial_investment] * (sim_days + 1), mode='lines', name='Initial Capital',
                                    line=dict(color='yellow', width=2, dash='dash')))
-    fig_paths.update_layout(template="plotly_dark", hovermode="x unified")
+    
+    # BẢN VÁ LỖI ÉP BIỂU ĐỒ TRÊN ĐIỆN THOẠI: Đẩy Legend lên trên cùng nằm ngang
+    fig_paths.update_layout(
+        template="plotly_dark", 
+        hovermode="x unified",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        )
+    )
     st.plotly_chart(fig_paths, use_container_width=True, key="mc_paths_chart") 
 
 with tab2:
     fig_hist = px.histogram(x=final_values, nbins=60, color_discrete_sequence=['#1f77b4'])
+    
+    # BẢN VÁ LỖI ĐÈ CHỮ: Phân chia top left (Trái trên) và bottom right (Phải dưới)
     fig_hist.add_vline(x=var_95_val, line_width=3, line_dash="dash", line_color="red",
-                       annotation_text=f"VaR 95%: {var_95_pct:.1f}%")
-    fig_hist.add_vline(x=initial_investment, line_width=2, line_color="yellow", annotation_text="Breakeven")
+                       annotation_text=f"VaR 95%: {var_95_pct:.1f}%", annotation_position="top left")
+    
+    fig_hist.add_vline(x=initial_investment, line_width=2, line_color="yellow", 
+                       annotation_text="Breakeven", annotation_position="bottom right")
+                       
     fig_hist.update_layout(template="plotly_dark")
     st.plotly_chart(fig_hist, use_container_width=True, key="mc_hist_chart") 
 
