@@ -90,19 +90,26 @@ if raw_data is None or raw_data.empty or len(raw_data.columns) == 0:
     st.error("Data error. Please check the entered tickers.")
     st.stop()
 
+# --- BẢN VÁ LỖI LÂY NHIỄM NaN ---
 if len(tickers) == 1:
     prices = raw_data['Close'].to_frame()
     prices.columns = tickers
     volumes = raw_data['Volume'].to_frame()
     volumes.columns = tickers
 else:
-    prices = raw_data['Close'].dropna()
-    volumes = raw_data['Volume'].dropna()
+    # Thay dropna() bằng fill: Giữ lại mọi dòng, lấp đầy dữ liệu trống bằng ngày hôm trước
+    prices = raw_data['Close'].ffill().bfill()
+    volumes = raw_data['Volume'].ffill().bfill()
 
-daily_returns = prices.pct_change().dropna()
-historical_vols = daily_returns.std().values * np.sqrt(252)
-historical_corr = daily_returns.corr().values
-mu = daily_returns.mean().values * 252
+daily_returns = prices.pct_change().fillna(0)
+
+# Ép kiểu an toàn 100% để loại bỏ NaN
+historical_vols = np.nan_to_num(daily_returns.std().values * np.sqrt(252), nan=0.20)
+mu = np.nan_to_num(daily_returns.mean().values * 252, nan=0.05)
+
+corr_matrix = daily_returns.corr().values
+historical_corr = np.nan_to_num(corr_matrix, nan=0.0)
+np.fill_diagonal(historical_corr, 1.0) # Đảm bảo đường chéo luôn = 1
 
 # Calculate ADTV (Average Daily Trading Volume) - Safeguard NaNs
 adtv = np.nan_to_num((prices.tail(90).mean() * volumes.tail(90).mean()).values, nan=1e-8)
@@ -113,12 +120,12 @@ if scenario != "Normal Market Conditions":
     spy_data = yf.download("SPY", period="2y", progress=False)['Close']
     spy_vol = 0.15 # Fallback value in case Yahoo Finance blocks the cloud IP
     if spy_data is not None and not spy_data.empty:
-        calc_spy_vol = float(np.squeeze(spy_data.pct_change().dropna().std())) * np.sqrt(252)
-        if not np.isnan(calc_spy_vol) and calc_spy_vol > 0:
+        calc_spy_vol = float(np.nan_to_num(np.squeeze(spy_data.pct_change().dropna().std()))) * np.sqrt(252)
+        if calc_spy_vol > 0:
             spy_vol = calc_spy_vol
 
     # 2. RELATIVE RISK PROXY
-    raw_rel_risk = historical_vols / spy_vol
+    raw_rel_risk = np.nan_to_num(historical_vols / spy_vol, nan=1.0)
 
     # --- QUANTITATIVE BRAKES (WINSORIZATION) ---
     rel_risk = np.clip(raw_rel_risk, 0.4, 2.5)
@@ -150,7 +157,7 @@ else:
     liquidity_penalty_arr = np.zeros(len(tickers))
     mu_shocked = mu
     cov_shocked = np.outer(historical_vols, historical_vols) * historical_corr
-    stressed_corr = historical_corr # Khai báo để tránh NameError
+    stressed_corr = historical_corr 
 
 with st.expander("🔍 View Personalized Risk Classification Report (Full Dynamic)", expanded=False):
     classifier_df = pd.DataFrame({
@@ -194,7 +201,6 @@ def run_ultimate_quant_engine(mu_vec, cov_mat, weights_vec, initial_val, days, n
 
     # Vectorized jump generation per asset profile (Cloud-Safe version)
     for i in range(num_assets):
-        # Đảm bảo lam luôn >= 0 và không phải là NaN
         lam = max(0.0, float(np.nan_to_num(lambda_j_arr[i])))
         Poisson_Jumps[:, i, :] = np.random.poisson(lam * dt, size=(days, n_sims))
         
@@ -225,12 +231,15 @@ simulated_paths = run_ultimate_quant_engine(
 # ---------------------------------------------------------
 # 5. DASHBOARD & VISUALIZATION
 # ---------------------------------------------------------
-final_values = simulated_paths[-1, :]
+final_values = np.nan_to_num(simulated_paths[-1, :])
 percentage_returns = (final_values / initial_investment - 1) * 100
 var_95_val = np.percentile(final_values, 5)
 var_95_pct = np.percentile(percentage_returns, 5)
-cvar_95_val = final_values[final_values <= var_95_val].mean()
-cvar_95_pct = percentage_returns[percentage_returns <= var_95_pct].mean()
+
+# Tránh cảnh báo chia cho mảng trống
+loss_mask = final_values <= var_95_val
+cvar_95_val = final_values[loss_mask].mean() if loss_mask.any() else var_95_val
+cvar_95_pct = percentage_returns[loss_mask].mean() if loss_mask.any() else var_95_pct
 prob_of_loss = np.mean(final_values < initial_investment) * 100
 
 col1, col2, col3, col4 = st.columns(4)
@@ -254,7 +263,7 @@ with tab1:
     fig_paths.add_trace(go.Scatter(y=[initial_investment] * (sim_days + 1), mode='lines', name='Initial Capital',
                                    line=dict(color='yellow', width=2, dash='dash')))
     fig_paths.update_layout(template="plotly_dark", hovermode="x unified")
-    st.plotly_chart(fig_paths, use_container_width=True, key="mc_paths_chart") # Fix lỗi trùng lặp ID
+    st.plotly_chart(fig_paths, use_container_width=True, key="mc_paths_chart") 
 
 with tab2:
     fig_hist = px.histogram(x=final_values, nbins=60, color_discrete_sequence=['#1f77b4'])
@@ -262,7 +271,7 @@ with tab2:
                        annotation_text=f"VaR 95%: {var_95_pct:.1f}%")
     fig_hist.add_vline(x=initial_investment, line_width=2, line_color="yellow", annotation_text="Breakeven")
     fig_hist.update_layout(template="plotly_dark")
-    st.plotly_chart(fig_hist, use_container_width=True, key="mc_hist_chart") # Fix lỗi trùng lặp ID
+    st.plotly_chart(fig_hist, use_container_width=True, key="mc_hist_chart") 
 
 with tab3:
     c1, c2 = st.columns(2)
@@ -270,9 +279,9 @@ with tab3:
         st.markdown("**(1) Historical Correlation Matrix**")
         fig_corr_1 = px.imshow(historical_corr, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1)
         fig_corr_1.update_layout(template="plotly_dark")
-        st.plotly_chart(fig_corr_1, use_container_width=True, key="corr_matrix_hist") # Fix lỗi trùng lặp ID
+        st.plotly_chart(fig_corr_1, use_container_width=True, key="corr_matrix_hist") 
     with c2:
         st.markdown("**(2) Stressed (Panic) Correlation Matrix**")
         fig_corr_2 = px.imshow(stressed_corr, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1)
         fig_corr_2.update_layout(template="plotly_dark")
-        st.plotly_chart(fig_corr_2, use_container_width=True, key="corr_matrix_stress") # Fix lỗi trùng lặp ID
+        st.plotly_chart(fig_corr_2, use_container_width=True, key="corr_matrix_stress")
