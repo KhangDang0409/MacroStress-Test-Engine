@@ -288,7 +288,7 @@ with tab2:
                        annotation_text=f"VaR 95%: {var_95_pct:.1f}%", annotation_position="top left")
     
     fig_hist.add_vline(x=initial_investment, line_width=2, line_color="yellow", 
-                       annotation_text="Breakeven", annotation_position="bottom right")
+                       annotation_text="Breakeven", annotation_position="top right")
                        
     fig_hist.update_layout(template="plotly_dark")
     st.plotly_chart(fig_hist, use_container_width=True, key="mc_hist_chart") 
