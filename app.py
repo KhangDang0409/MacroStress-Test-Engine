@@ -83,7 +83,6 @@ def fetch_market_data(tickers_list):
     except Exception:
         return None
 
-
 with st.spinner("Fetching data and analyzing market microstructure..."):
     raw_data = fetch_market_data(tickers)
 
@@ -105,31 +104,30 @@ historical_vols = daily_returns.std().values * np.sqrt(252)
 historical_corr = daily_returns.corr().values
 mu = daily_returns.mean().values * 252
 
-# Calculate ADTV (Average Daily Trading Volume)
-adtv = (prices.tail(90).mean() * volumes.tail(90).mean()).values
+# Calculate ADTV (Average Daily Trading Volume) - Safeguard NaNs
+adtv = np.nan_to_num((prices.tail(90).mean() * volumes.tail(90).mean()).values, nan=1e-8)
 
 # --- ULTIMATE CLASSIFIER ALGORITHM ---
 if scenario != "Normal Market Conditions":
-    # 1. Fetch Global Benchmark (SPY) for relative risk anchoring
+    # 1. Fetch Global Benchmark (SPY) for relative risk anchoring (with cloud fallback protection)
     spy_data = yf.download("SPY", period="2y", progress=False)['Close']
-    spy_vol = float(np.squeeze(spy_data.pct_change().dropna().std())) * np.sqrt(252)
+    spy_vol = 0.15 # Fallback value in case Yahoo Finance blocks the cloud IP
+    if spy_data is not None and not spy_data.empty:
+        calc_spy_vol = float(np.squeeze(spy_data.pct_change().dropna().std())) * np.sqrt(252)
+        if not np.isnan(calc_spy_vol) and calc_spy_vol > 0:
+            spy_vol = calc_spy_vol
 
     # 2. RELATIVE RISK PROXY
     raw_rel_risk = historical_vols / spy_vol
 
     # --- QUANTITATIVE BRAKES (WINSORIZATION) ---
-    # Floor (0.4) prevents "immortality". Ceiling (2.5) prevents irrational collapses.
     rel_risk = np.clip(raw_rel_risk, 0.4, 2.5)
 
     # 3. Dynamic Parameter Scaling via Risk Proxy
-    # ABSOLUTE VOLATILITY SHIELD: Immunize assets with historic vol < 25% from jumps
     jump_intensity_arr = np.where(historical_vols < 0.25, 0, base_jump_intensity * np.log1p(rel_risk))
-
-    # Cap jump severity (prevent un-realistic single-day drops beyond 20%)
     jump_mean_arr = np.clip(base_jump_mean * rel_risk, -0.20, 0.0)
     jump_vol_arr = base_jump_vol * rel_risk
 
-    # Drift Cushion: Defensive assets (rel_risk < 1) face a discounted macro drag
     drift_multiplier = np.where(rel_risk < 1, rel_risk ** 1.5, rel_risk)
     drift_shock_arr = base_drift_shock * drift_multiplier
 
@@ -152,13 +150,12 @@ else:
     liquidity_penalty_arr = np.zeros(len(tickers))
     mu_shocked = mu
     cov_shocked = np.outer(historical_vols, historical_vols) * historical_corr
-    stressed_corr = historical_corr
+    stressed_corr = historical_corr # Khai báo để tránh NameError
 
 with st.expander("🔍 View Personalized Risk Classification Report (Full Dynamic)", expanded=False):
     classifier_df = pd.DataFrame({
         'Ticker': tickers,
-        'Relative Risk Proxy (vs SPY)': np.round(
-            historical_vols / (spy_vol if scenario != "Normal Market Conditions" else 1), 2),
+        'Relative Risk Proxy (vs SPY)': np.round(historical_vols / spy_vol if scenario != "Normal Market Conditions" else historical_vols / 0.15, 2),
         'Liquidity Penalty (Slippage)': [f"{p * 100:.2f}%" for p in liquidity_penalty_arr],
         'Macro Drift Shock': [f"{d * 100:.2f}%" for d in (mu_shocked - mu)],
         'Jump Intensity (per year)': np.round(jump_intensity_arr, 1),
@@ -175,6 +172,9 @@ def run_ultimate_quant_engine(mu_vec, cov_mat, weights_vec, initial_val, days, n
                               lambda_j_arr, mu_j_arr, sigma_j_arr, liq_penalty_arr):
     num_assets = len(weights_vec)
     dt = 1 / 252
+    
+    # Ép kiểu dữ liệu an toàn để tránh ValueError khi lên Cloud
+    cov_mat = np.nan_to_num(cov_mat)
 
     try:
         L = np.linalg.cholesky(cov_mat)
@@ -192,10 +192,15 @@ def run_ultimate_quant_engine(mu_vec, cov_mat, weights_vec, initial_val, days, n
     Poisson_Jumps = np.zeros((days, num_assets, n_sims))
     Jump_Sizes = np.zeros((days, num_assets, n_sims))
 
-    # Vectorized jump generation per asset profile
+    # Vectorized jump generation per asset profile (Cloud-Safe version)
     for i in range(num_assets):
-        Poisson_Jumps[:, i, :] = np.random.poisson(lambda_j_arr[i] * dt, size=(days, n_sims))
-        Jump_Sizes[:, i, :] = np.random.normal(mu_j_arr[i], sigma_j_arr[i], size=(days, n_sims))
+        # Đảm bảo lam luôn >= 0 và không phải là NaN
+        lam = max(0.0, float(np.nan_to_num(lambda_j_arr[i])))
+        Poisson_Jumps[:, i, :] = np.random.poisson(lam * dt, size=(days, n_sims))
+        
+        mu_j = float(np.nan_to_num(mu_j_arr[i]))
+        sig_j = float(np.nan_to_num(sigma_j_arr[i]))
+        Jump_Sizes[:, i, :] = np.random.normal(mu_j, sig_j, size=(days, n_sims))
 
     for t in range(1, days + 1):
         epsilon = L @ Z[t - 1]
@@ -249,7 +254,7 @@ with tab1:
     fig_paths.add_trace(go.Scatter(y=[initial_investment] * (sim_days + 1), mode='lines', name='Initial Capital',
                                    line=dict(color='yellow', width=2, dash='dash')))
     fig_paths.update_layout(template="plotly_dark", hovermode="x unified")
-    st.plotly_chart(fig_paths, use_container_width=True)
+    st.plotly_chart(fig_paths, use_container_width=True, key="mc_paths_chart") # Fix lỗi trùng lặp ID
 
 with tab2:
     fig_hist = px.histogram(x=final_values, nbins=60, color_discrete_sequence=['#1f77b4'])
@@ -257,17 +262,17 @@ with tab2:
                        annotation_text=f"VaR 95%: {var_95_pct:.1f}%")
     fig_hist.add_vline(x=initial_investment, line_width=2, line_color="yellow", annotation_text="Breakeven")
     fig_hist.update_layout(template="plotly_dark")
-    st.plotly_chart(fig_hist, use_container_width=True)
+    st.plotly_chart(fig_hist, use_container_width=True, key="mc_hist_chart") # Fix lỗi trùng lặp ID
 
 with tab3:
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**(1) Historical Correlation Matrix**")
-        st.plotly_chart(
-            px.imshow(historical_corr, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1).update_layout(
-                template="plotly_dark"), use_container_width=True)
+        fig_corr_1 = px.imshow(historical_corr, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1)
+        fig_corr_1.update_layout(template="plotly_dark")
+        st.plotly_chart(fig_corr_1, use_container_width=True, key="corr_matrix_hist") # Fix lỗi trùng lặp ID
     with c2:
         st.markdown("**(2) Stressed (Panic) Correlation Matrix**")
-        st.plotly_chart(
-            px.imshow(stressed_corr, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1).update_layout(
-                template="plotly_dark"), use_container_width=True)
+        fig_corr_2 = px.imshow(stressed_corr, text_auto=".2f", color_continuous_scale="RdBu_r", zmin=-1, zmax=1)
+        fig_corr_2.update_layout(template="plotly_dark")
+        st.plotly_chart(fig_corr_2, use_container_width=True, key="corr_matrix_stress") # Fix lỗi trùng lặp ID
