@@ -89,26 +89,40 @@ if raw_data is None or raw_data.empty or len(raw_data.columns) == 0:
     st.error("Data error. Please check the entered tickers.")
     st.stop()
 
-# ĐÃ KHÔI PHỤC LẠI CHÍNH XÁC LỆNH DROPNA GỐC CỦA BẠN
+# --- BẢN VÁ LỖI VOLUME VÀ BẢO TOÀN 100% TOÁN HỌC ---
 if len(tickers) == 1:
     prices = raw_data['Close'].to_frame()
     prices.columns = tickers
+    prices = prices.dropna()
     volumes = raw_data['Volume'].to_frame()
     volumes.columns = tickers
+    volumes = volumes.loc[prices.index].fillna(0)
 else:
+    # 1. Chỉ Dropna bảng Giá để BẢO TOÀN tuyệt đối toán học Monte Carlo như Local
     prices = raw_data['Close'].dropna()
-    volumes = raw_data['Volume'].dropna()
+    # 2. Lấy bảng Volume theo bảng Giá, lỗi thiếu dữ liệu thì gán = 0 để tránh lây nhiễm NaN
+    volumes = raw_data['Volume'].loc[prices.index].fillna(0)
+
+# Cầu dao bảo vệ cuối cùng
+if prices.empty or len(prices) < 2:
+    st.error("🚨 API Cloud Failed: Data is empty after cleaning. Please refresh.")
+    st.stop()
 
 daily_returns = prices.pct_change().dropna()
 historical_vols = daily_returns.std().values * np.sqrt(252)
 historical_corr = daily_returns.corr().values
+
+# Ép NaN về 0 để vẽ Heatmap mượt mà nếu có lỗi
+historical_corr = np.nan_to_num(historical_corr, nan=0.0)
+np.fill_diagonal(historical_corr, 1.0)
+
 mu = daily_returns.mean().values * 252
 
-adtv = (prices.tail(90).mean() * volumes.tail(90).mean()).values
+# Tính ADTV không bao giờ bị NaN
+adtv = np.nan_to_num((prices.tail(90).mean() * volumes.tail(90).mean()).values, nan=1e-8)
 
 # --- ULTIMATE CLASSIFIER ALGORITHM ---
 if scenario != "Normal Market Conditions":
-    # Bảo vệ SPY khỏi lỗi mạng Cloud (Chỉ dùng try/except, giữ nguyên toán học)
     spy_data = yf.download("SPY", period="2y", progress=False)['Close']
     try:
         spy_vol = float(np.squeeze(spy_data.pct_change().dropna().std())) * np.sqrt(252)
@@ -117,7 +131,7 @@ if scenario != "Normal Market Conditions":
     except:
         spy_vol = 0.15
 
-    raw_rel_risk = historical_vols / spy_vol
+    raw_rel_risk = np.nan_to_num(historical_vols / spy_vol, nan=1.0)
     rel_risk = np.clip(raw_rel_risk, 0.4, 2.5)
 
     jump_intensity_arr = np.where(historical_vols < 0.25, 0, base_jump_intensity * np.log1p(rel_risk))
@@ -166,6 +180,8 @@ def run_ultimate_quant_engine(mu_vec, cov_mat, weights_vec, initial_val, days, n
     num_assets = len(weights_vec)
     dt = 1 / 252
 
+    cov_mat = np.nan_to_num(cov_mat, nan=0.0)
+
     try:
         L = np.linalg.cholesky(cov_mat)
     except np.linalg.LinAlgError:
@@ -183,12 +199,16 @@ def run_ultimate_quant_engine(mu_vec, cov_mat, weights_vec, initial_val, days, n
     Jump_Sizes = np.zeros((days, num_assets, n_sims))
 
     for i in range(num_assets):
-        # Bộ lọc an toàn duy nhất: Tránh lỗi Poisson nhận số âm hoặc NaN
+        # Chặn lỗi phân phối Poisson
         lam = lambda_j_arr[i]
         if np.isnan(lam) or lam < 0: 
             lam = 0.0
         Poisson_Jumps[:, i, :] = np.random.poisson(lam * dt, size=(days, n_sims))
-        Jump_Sizes[:, i, :] = np.random.normal(mu_j_arr[i], sigma_j_arr[i], size=(days, n_sims))
+        
+        # Chặn lỗi phân phối Chuẩn
+        m_j = np.nan_to_num(mu_j_arr[i])
+        s_j = np.nan_to_num(sigma_j_arr[i])
+        Jump_Sizes[:, i, :] = np.random.normal(m_j, s_j, size=(days, n_sims))
 
     for t in range(1, days + 1):
         epsilon = L @ Z[t - 1]
