@@ -39,7 +39,6 @@ with st.sidebar:
          "Black Swan Crash (Liquidity Crisis)"]
     )
 
-    # Base parameters (Will be dynamically scaled for each asset)
     if scenario == "Hawkish Policy (Interest Rate Shock)":
         base_drift_shock = -0.15
         vol_multiplier = 1.35
@@ -90,47 +89,37 @@ if raw_data is None or raw_data.empty or len(raw_data.columns) == 0:
     st.error("Data error. Please check the entered tickers.")
     st.stop()
 
-# --- BẢN VÁ LỖI LÂY NHIỄM NaN ---
+# ĐÃ KHÔI PHỤC LẠI CHÍNH XÁC LỆNH DROPNA GỐC CỦA BẠN
 if len(tickers) == 1:
     prices = raw_data['Close'].to_frame()
     prices.columns = tickers
     volumes = raw_data['Volume'].to_frame()
     volumes.columns = tickers
 else:
-    # Thay dropna() bằng fill: Giữ lại mọi dòng, lấp đầy dữ liệu trống bằng ngày hôm trước
-    prices = raw_data['Close'].ffill().bfill()
-    volumes = raw_data['Volume'].ffill().bfill()
+    prices = raw_data['Close'].dropna()
+    volumes = raw_data['Volume'].dropna()
 
-daily_returns = prices.pct_change().fillna(0)
+daily_returns = prices.pct_change().dropna()
+historical_vols = daily_returns.std().values * np.sqrt(252)
+historical_corr = daily_returns.corr().values
+mu = daily_returns.mean().values * 252
 
-# Ép kiểu an toàn 100% để loại bỏ NaN
-historical_vols = np.nan_to_num(daily_returns.std().values * np.sqrt(252), nan=0.20)
-mu = np.nan_to_num(daily_returns.mean().values * 252, nan=0.05)
-
-corr_matrix = daily_returns.corr().values
-historical_corr = np.nan_to_num(corr_matrix, nan=0.0)
-np.fill_diagonal(historical_corr, 1.0) # Đảm bảo đường chéo luôn = 1
-
-# Calculate ADTV (Average Daily Trading Volume) - Safeguard NaNs
-adtv = np.nan_to_num((prices.tail(90).mean() * volumes.tail(90).mean()).values, nan=1e-8)
+adtv = (prices.tail(90).mean() * volumes.tail(90).mean()).values
 
 # --- ULTIMATE CLASSIFIER ALGORITHM ---
 if scenario != "Normal Market Conditions":
-    # 1. Fetch Global Benchmark (SPY) for relative risk anchoring (with cloud fallback protection)
+    # Bảo vệ SPY khỏi lỗi mạng Cloud (Chỉ dùng try/except, giữ nguyên toán học)
     spy_data = yf.download("SPY", period="2y", progress=False)['Close']
-    spy_vol = 0.15 # Fallback value in case Yahoo Finance blocks the cloud IP
-    if spy_data is not None and not spy_data.empty:
-        calc_spy_vol = float(np.nan_to_num(np.squeeze(spy_data.pct_change().dropna().std()))) * np.sqrt(252)
-        if calc_spy_vol > 0:
-            spy_vol = calc_spy_vol
+    try:
+        spy_vol = float(np.squeeze(spy_data.pct_change().dropna().std())) * np.sqrt(252)
+        if np.isnan(spy_vol) or spy_vol == 0:
+            spy_vol = 0.15
+    except:
+        spy_vol = 0.15
 
-    # 2. RELATIVE RISK PROXY
-    raw_rel_risk = np.nan_to_num(historical_vols / spy_vol, nan=1.0)
-
-    # --- QUANTITATIVE BRAKES (WINSORIZATION) ---
+    raw_rel_risk = historical_vols / spy_vol
     rel_risk = np.clip(raw_rel_risk, 0.4, 2.5)
 
-    # 3. Dynamic Parameter Scaling via Risk Proxy
     jump_intensity_arr = np.where(historical_vols < 0.25, 0, base_jump_intensity * np.log1p(rel_risk))
     jump_mean_arr = np.clip(base_jump_mean * rel_risk, -0.20, 0.0)
     jump_vol_arr = base_jump_vol * rel_risk
@@ -138,13 +127,11 @@ if scenario != "Normal Market Conditions":
     drift_multiplier = np.where(rel_risk < 1, rel_risk ** 1.5, rel_risk)
     drift_shock_arr = base_drift_shock * drift_multiplier
 
-    # 4. Liquidity Penalty (Slippage)
     global_adtv_benchmark = 50_000_000 if tickers[0].isalpha() else 1_200_000_000_000
     base_penalty = 0.005
     liquidity_penalty_arr = base_penalty * (global_adtv_benchmark / np.maximum(adtv, 1e-8))
     liquidity_penalty_arr = np.clip(liquidity_penalty_arr, base_penalty, max_liquidity_penalty)
 
-    # 5. Update Mu and Covariance
     mu_shocked = mu + drift_shock_arr
     panic_matrix = np.ones_like(historical_corr)
     stressed_corr = (1 - corr_stress) * historical_corr + corr_stress * panic_matrix
@@ -170,7 +157,6 @@ with st.expander("🔍 View Personalized Risk Classification Report (Full Dynami
     })
     st.dataframe(classifier_df, use_container_width=True)
 
-
 # ---------------------------------------------------------
 # 4. CORE ENGINE (SAFE BROADCASTING & VECTORIZATION)
 # ---------------------------------------------------------
@@ -179,9 +165,6 @@ def run_ultimate_quant_engine(mu_vec, cov_mat, weights_vec, initial_val, days, n
                               lambda_j_arr, mu_j_arr, sigma_j_arr, liq_penalty_arr):
     num_assets = len(weights_vec)
     dt = 1 / 252
-    
-    # Ép kiểu dữ liệu an toàn để tránh ValueError khi lên Cloud
-    cov_mat = np.nan_to_num(cov_mat)
 
     try:
         L = np.linalg.cholesky(cov_mat)
@@ -199,14 +182,13 @@ def run_ultimate_quant_engine(mu_vec, cov_mat, weights_vec, initial_val, days, n
     Poisson_Jumps = np.zeros((days, num_assets, n_sims))
     Jump_Sizes = np.zeros((days, num_assets, n_sims))
 
-    # Vectorized jump generation per asset profile (Cloud-Safe version)
     for i in range(num_assets):
-        lam = max(0.0, float(np.nan_to_num(lambda_j_arr[i])))
+        # Bộ lọc an toàn duy nhất: Tránh lỗi Poisson nhận số âm hoặc NaN
+        lam = lambda_j_arr[i]
+        if np.isnan(lam) or lam < 0: 
+            lam = 0.0
         Poisson_Jumps[:, i, :] = np.random.poisson(lam * dt, size=(days, n_sims))
-        
-        mu_j = float(np.nan_to_num(mu_j_arr[i]))
-        sig_j = float(np.nan_to_num(sigma_j_arr[i]))
-        Jump_Sizes[:, i, :] = np.random.normal(mu_j, sig_j, size=(days, n_sims))
+        Jump_Sizes[:, i, :] = np.random.normal(mu_j_arr[i], sigma_j_arr[i], size=(days, n_sims))
 
     for t in range(1, days + 1):
         epsilon = L @ Z[t - 1]
@@ -231,15 +213,12 @@ simulated_paths = run_ultimate_quant_engine(
 # ---------------------------------------------------------
 # 5. DASHBOARD & VISUALIZATION
 # ---------------------------------------------------------
-final_values = np.nan_to_num(simulated_paths[-1, :])
+final_values = simulated_paths[-1, :]
 percentage_returns = (final_values / initial_investment - 1) * 100
 var_95_val = np.percentile(final_values, 5)
 var_95_pct = np.percentile(percentage_returns, 5)
-
-# Tránh cảnh báo chia cho mảng trống
-loss_mask = final_values <= var_95_val
-cvar_95_val = final_values[loss_mask].mean() if loss_mask.any() else var_95_val
-cvar_95_pct = percentage_returns[loss_mask].mean() if loss_mask.any() else var_95_pct
+cvar_95_val = final_values[final_values <= var_95_val].mean()
+cvar_95_pct = percentage_returns[percentage_returns <= var_95_pct].mean()
 prob_of_loss = np.mean(final_values < initial_investment) * 100
 
 col1, col2, col3, col4 = st.columns(4)
