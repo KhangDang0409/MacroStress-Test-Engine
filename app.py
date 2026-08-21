@@ -5,18 +5,17 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 
-# ---------------------------------------------------------
 # 1. PAGE CONFIGURATION
-# ---------------------------------------------------------
+
 st.set_page_config(page_title="MacroStress Test", page_icon="📈", layout="wide")
 st.title("MacroStress Test Engine")
 st.markdown(
     "This is a personal project designed for advanced portfolio stress testing and tail-risk analysis. The program uses Correlated Monte Carlo simulations to generate thousands of possible future price paths and integrates the Merton Jump-Diffusion model to capture sudden, extreme market crashes (fat tails) rather than just normal distributions. \n The underlying mechanism is also powered by a data-driven risk classifier. By dynamically evaluating historical volatility and Average Daily Trading Volume (ADTV), the engine autonomously applies quantitative brakes—deploying an absolute volatility shield for defensive assets and strict liquidity slippage penalties for highly speculative equities. Combined with a stressed correlation matrix, this tool transforms complex mathematical models into an uncompromising, highly realistic assessment of maximum drawdown under extreme macroeconomic headwinds. \n \n Made by Khang Dang")
 st.divider()
 
-# ---------------------------------------------------------
+
 # 2. SIDEBAR - CONFIGURATION
-# ---------------------------------------------------------
+
 with st.sidebar:
     st.header("⚙️ 1. Portfolio Configuration")
     tickers_input = st.text_input("Enter Tickers (comma-separated):", value="JNJ, WMT, PG")
@@ -72,9 +71,9 @@ with st.sidebar:
     num_simulations = st.slider("Number of Monte Carlo Paths:", 1000, 10000, 3000, step=1000)
 
 
-# ---------------------------------------------------------
-# 3. DATA PIPELINE & CLASSIFIER (FULLY DYNAMIC)
-# ---------------------------------------------------------
+
+# 3. DATA PIPELINE & CLASSIFIER 
+
 @st.cache_data(ttl=300)
 def fetch_market_data(tickers_list):
     close_dict = {}
@@ -121,7 +120,7 @@ mu = daily_returns.mean().values * 252
 
 adtv = np.nan_to_num((prices.tail(90).mean() * volumes.tail(90).mean()).values, nan=1e-8)
 
-# --- ULTIMATE CLASSIFIER ALGORITHM ---
+# CLASSIFIER ALGORITHM
 if scenario != "Normal Market Conditions":
     try:
         spy_data = yf.download("SPY", period="2y", progress=False, threads=False)
@@ -176,9 +175,9 @@ with st.expander("🔍 View Personalized Risk Classification Report (Full Dynami
     })
     st.dataframe(classifier_df, use_container_width=True)
 
-# ---------------------------------------------------------
-# 4. CORE ENGINE (SAFE BROADCASTING & VECTORIZATION)
-# ---------------------------------------------------------
+
+# 4. CORE ENGINE
+
 @st.cache_data
 def run_ultimate_quant_engine(mu_vec, cov_mat, weights_vec, initial_val, days, n_sims,
                               lambda_j_arr, mu_j_arr, sigma_j_arr, liq_penalty_arr):
@@ -232,9 +231,8 @@ simulated_paths = run_ultimate_quant_engine(
     jump_intensity_arr, jump_mean_arr, jump_vol_arr, liquidity_penalty_arr
 )
 
-# ---------------------------------------------------------
 # 5. DASHBOARD & VISUALIZATION
-# ---------------------------------------------------------
+
 final_values = simulated_paths[-1, :]
 percentage_returns = (final_values / initial_investment - 1) * 100
 var_95_val = np.percentile(final_values, 5)
@@ -245,13 +243,13 @@ prob_of_loss = np.mean(final_values < initial_investment) * 100
 
 col1, col2, col3, col4 = st.columns(4)
 
-# FIX MÀU: Đã gỡ bỏ delta_color="inverse" để trả lại mặc định (Số âm hiển thị màu đỏ)
+# FIX MÀU
 col1.metric("Expected Value (Mean)", f"{np.mean(final_values):,.0f}",
             f"{(np.mean(final_values) / initial_investment - 1) * 100:.2f}%")
 col2.metric("VaR 95%", f"{var_95_val:,.0f}", f"{var_95_pct:.2f}%")
 col3.metric("CVaR 95% (Expected Shortfall)", f"{cvar_95_val:,.0f}", f"{cvar_95_pct:.2f}%")
 
-# Báo động Danger sẽ có màu Đỏ (do dùng inverse với chuỗi dương), Safe có màu Xanh
+# Danger đỏ safe xanh
 col4.metric("Probability of Loss", f"{prob_of_loss:.1f}%", "Danger" if prob_of_loss > 50 else "Safe",
             delta_color="inverse" if prob_of_loss > 50 else "normal")
 
