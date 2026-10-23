@@ -9,7 +9,26 @@ import plotly.express as px
 
 st.set_page_config(page_title="MacroStress Test", page_icon="📈", layout="wide")
 st.title("MacroStress Test Engine")
-st.markdown("MacroStress Test explores how a portfolio could perform under normal market conditions and three predefined stress scenarios: an interest-rate shock, stagflation, and a liquidity crisis. \n \n The model uses two years of historical price data from Yahoo Finance to estimate each asset’s average return, volatility, and correlations with other holdings. Correlated Monte Carlo simulations generate possible price paths, while a jump component introduces sudden price changes. Under stress, preset assumptions adjust returns, volatility, and correlations; asset-level volatility influences jump behavior, and trading liquidity determines additional valuation penalties. \n \n Using your portfolio weights and selected time horizon, the tool summarizes simulated outcomes through portfolio values, downside-risk measures, and the probability of finishing below your initial investment. These are conditional model results, not forecasts.\n Made by Khang Dang")
+st.markdown("""
+MacroStress Test explores how a portfolio could perform under normal market
+conditions and three predefined stress scenarios: an interest-rate shock,
+stagflation, and a liquidity crisis.
+
+The model uses two years of historical price data from Yahoo Finance to
+estimate each asset's average return, volatility, and correlations with other
+holdings. Correlated Monte Carlo simulations generate possible price paths,
+while a jump component introduces sudden price changes. Under stress, preset
+assumptions adjust returns, volatility, and correlations; asset-level volatility
+influences jump behavior, and trading liquidity determines additional
+valuation penalties.
+
+Using your portfolio weights and selected time horizon, the tool summarizes
+simulated outcomes through portfolio values, downside-risk measures, and the
+probability of finishing below your initial investment. These are conditional
+model results, not forecasts.
+
+Made by Khang Dang.
+""")
 st.divider()
 
 
