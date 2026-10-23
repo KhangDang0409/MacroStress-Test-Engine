@@ -10,7 +10,11 @@ import plotly.express as px
 st.set_page_config(page_title="MacroStress Test", page_icon="📈", layout="wide")
 st.title("MacroStress Test Engine")
 st.markdown(
-    "This is a personal project designed for advanced portfolio stress testing and tail-risk analysis. The program uses Correlated Monte Carlo simulations to generate thousands of possible future price paths and integrates the Merton Jump-Diffusion model to capture sudden, extreme market crashes (fat tails) rather than just normal distributions. \n The underlying mechanism is also powered by a data-driven risk classifier. By dynamically evaluating historical volatility and Average Daily Trading Volume (ADTV), the engine autonomously applies quantitative brakes—deploying an absolute volatility shield for defensive assets and strict liquidity slippage penalties for highly speculative equities. Combined with a stressed correlation matrix, this tool transforms complex mathematical models into an uncompromising, highly realistic assessment of maximum drawdown under extreme macroeconomic headwinds. \n \n Made by Khang Dang")
+    "MacroStress Test explores how a portfolio could perform under normal market conditions and three predefined stress scenarios: an interest-rate shock, stagflation, and a liquidity crisis.
+
+The model uses two years of historical price data from Yahoo Finance to estimate each asset’s average return, volatility, and correlations with other holdings. Correlated Monte Carlo simulations generate possible price paths, while a jump component introduces sudden price changes. Under stress, preset assumptions adjust returns, volatility, and correlations; asset-level volatility influences jump behavior, and trading liquidity determines additional valuation penalties.
+
+Using your portfolio weights and selected time horizon, the tool summarizes simulated outcomes through portfolio values, downside-risk measures, and the probability of finishing below your initial investment. These are conditional model results, not forecasts.")
 st.divider()
 
 
