@@ -1,6 +1,8 @@
 """Vercel Flask entrypoint. Run locally with: python app.py"""
 import json
 import logging
+import os
+import re
 from pathlib import Path
 from flask import Flask, Response, request, send_from_directory
 from bridge import DEFAULTS, LOCK, ModelError, SOURCE_HASH, execute, validate
@@ -20,6 +22,18 @@ def assets(name):
 @app.get('/api/health')
 def health():
     return dict(status='ok', source_sha256=SOURCE_HASH, defaults=DEFAULTS)
+
+@app.get('/api/project')
+def project():
+    # Only expose public repository coordinates, never other environment values.
+    owner = os.environ.get('VERCEL_GIT_REPO_OWNER', '')
+    repo = os.environ.get('VERCEL_GIT_REPO_SLUG', '')
+    provider = os.environ.get('VERCEL_GIT_PROVIDER', '')
+    valid = lambda text: bool(re.fullmatch(r'[A-Za-z0-9_.-]+', text)) and text not in ('.', '..')
+    url = None
+    if provider == 'github' and valid(owner) and valid(repo):
+        url = f'https://github.com/{owner}/{repo}'
+    return {'github_url': url}, 200, {'Cache-Control': 'no-store'}
 
 @app.post('/api/simulate')
 def simulate():
