@@ -41,6 +41,6 @@ After running the simulation, the dashboard outputs standard institutional risk 
 * **CVaR 95% (Expected Shortfall):** The average expected loss *if* the portfolio falls beyond the VaR threshold (answering: "If things go really bad, exactly how bad will it get?").
 * **Probability of Loss:** The mathematical percentage chance of ending up with less money than the initial investment.
 
-Vercel link: macro-stress-test-engine-pyjtj7tmh-khang-dang.vercel.app
+Vercel link: https://macro-stress-test-engine.vercel.app
 
 Streamlit link: https://macrostress-test-engine.streamlit.app
