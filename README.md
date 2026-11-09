@@ -42,4 +42,5 @@ After running the simulation, the dashboard outputs standard institutional risk 
 * **Probability of Loss:** The mathematical percentage chance of ending up with less money than the initial investment.
 
 Vercel link: macro-stress-test-engine-pyjtj7tmh-khang-dang.vercel.app
+
 Streamlit link: https://macrostress-test-engine.streamlit.app
